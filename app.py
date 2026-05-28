@@ -52,14 +52,22 @@ def getMultipliedValue(num1, num2):
 # 🛠️ [백엔드 함수 정의 2] 실시간 날씨 API (한글 예외 처리 포함)
 def get_weather(location):
     try:
+        # 1. 자주 검색하는 주요 도시 한글 명칭 안전하게 영어로 치환
         location_map = {
             "용인시": "Yongin", "용인": "Yongin",
             "서울시": "Seoul", "서울": "Seoul",
-            "인천": "Incheon", "부산": "Busan"
+            "안양시": "Anyang", "안양": "Anyang",
+            "인천": "Incheon", "부산": "Busan",
+            "수원": "Suwon", "군포": "Gunpo", "의왕": "Uiwang"
         }
         eng_location = location_map.get(location, location)
-        url = f"https://wttr.in/{eng_location}?format=j1"
-        response = requests.get(url, headers={"User-Agent": "curl"}, timeout=10)
+        
+        # 2. ⭐ [핵심 교정] 도시명 뒤에 ',KR'을 붙여 중국 등 해외 동일 지명으로 빠지는 현상 차단
+        # 예: Anyang,KR 형태로 주소가 만들어져 한국 안양시 데이터만 무조건 가져옵니다.
+        url = f"https://wttr.in/{eng_location},KR?format=j1"
+        
+        headers = {"User-Agent": "curl"}
+        response = requests.get(url, headers=headers, timeout=10)
         
         if response.status_code == 200:
             current = response.json()["current_condition"][0]
@@ -148,7 +156,7 @@ st.sidebar.markdown("""
 ### 🚀 사용 가능한 도구 목록
 1. **🧮 초정밀 계산기**: 대형 숫자 곱셈 연산 기능
 2. **🌤️ 실시간 날씨 조회**: 외부 wttr.in 동적 API 연동
-3. **🔍 사내 문서 검색**: LH 매입임대 관련 지식 탐색
+3. **🔍 LH 매입임대 문서 검색**: LH 매입임대 관련 지식 탐색
 4. **📊 파이썬 코드 실행**: 데이터 시각화 및 인라인 차트 빌드
 ---
 """)
