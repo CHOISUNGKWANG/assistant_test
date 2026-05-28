@@ -42,7 +42,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🧸 말랑말랑 통합 AI 비서 (Full Spec)")
+st.title("🧸 말랑말랑 통합 AI 비서")
 st.caption("외부 실시간 API 연동부터 파이썬 시각화, 문서 정밀 탐색까지 모두 처리합니다.")
 
 # 🛠️ [백엔드 함수 정의 1] 곱셈 연산
