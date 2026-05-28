@@ -81,6 +81,31 @@ def get_weather(location):
     except Exception as e:
         return json.dumps({"error": str(e)})
 
+def search_web(query):
+    try:
+        url = "https://serpapi.com/search"
+        params = {
+            "engine": "google",
+            "q": query,
+            "hl": "ko",  # 한국어 결과 우선
+            "gl": "kr",  # 대한민국 지역 기준
+            "api_key": st.secrets["SERP_API_KEY"]  # secrets.toml에 키 추가 필요
+        }
+        response = requests.get(url, params=params, timeout=10)
+        
+        if response.status_code == 200:
+            results = response.json()
+            search_snippets = []
+            
+            # 검색 결과 중 핵심 텍스트 스니펫 상위 3개 추출
+            for result in results.get("organic_results", [])[:3]:
+                search_snippets.append(f"🔗 제목: {result.get('title')}\n내용: {result.get('snippet')}\n")
+                
+            return json.dumps({"search_results": search_snippets}, ensure_ascii=False)
+        return json.dumps({"error": f"SerpApi returned status {response.status_code}"})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
 # 세션 상태 초기화
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -137,6 +162,20 @@ if "assistant_id" not in st.session_state:
                             "required": ["location"]
                         }
                     }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "search_web",
+                        "description": "최신 뉴스, 실시간 정보, 인물, 트렌드 등 내부 지식이나 문서에 없는 일반적인 내용을 구글에서 검색합니다.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string", "description": "구글에 검색할 핵심 키워드 문장"}
+                            },
+                            "required": ["query"]
+                        }
+                    }
                 }
             ],
             tool_resources={
@@ -158,6 +197,7 @@ st.sidebar.markdown("""
 2. **🌤️ 실시간 날씨 조회**: 외부 wttr.in 동적 API 연동
 3. **🔍 LH 매입임대 문서 검색**: LH 매입임대 관련 지식 탐색
 4. **📊 파이썬 코드 실행**: 데이터 시각화 및 인라인 차트 빌드
+5. **🌐 실시간 구글 웹 검색**: 최신 뉴스 및 웹 트렌드 실시간 검색 팝업 (SerpApi)
 ---
 """)
 
@@ -276,6 +316,8 @@ if prompt_to_send:
                             output = getMultipliedValue(num1=f_args.get("num1"), num2=f_args.get("num2"))
                         elif f_name == "get_weather":
                             output = get_weather(location=f_args.get("location"))
+                        elif f_name == "search_web":
+                            output = search_web(query=f_args.get("query"))
                         else:
                             output = json.dumps({"error": "Unknown function"})
                             
