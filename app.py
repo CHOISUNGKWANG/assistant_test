@@ -22,7 +22,7 @@ client = AzureOpenAI(
 # 스트림릿 UI 구성
 st.set_page_config(page_title="말랑 만능 AI 비서", layout="wide")
 
-# 🎨 정밀 레이트 CSS 주입 (디자인 보호 및 테마 셋팅)
+# 🎨 정밀 레이트 CSS 주입
 st.markdown("""
     <style>
     .stApp { background-color: #F7F4EF !important; }
@@ -43,6 +43,10 @@ st.markdown("""
     }
     .stChatInputContainer textarea { color: #4A3B32 !important; }
     .stChatInputContainer { border-radius: 15px !important; }
+    .citation-box {
+        background-color: #EAE3D8; padding: 10px; border-left: 4px solid #C4A482;
+        border-radius: 5px; margin-top: 10px; font-size: 0.9rem; color: #5A4A40;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -53,29 +57,23 @@ st.caption("외부 실시간 API 연동부터 파이썬 시각화, 문서 정밀
 def getMultipliedValue(num1, num2):
     return json.dumps({"result": num1 * num2})
 
-# 🛠️ [백엔드 함수 정의 2] 실시간 날씨 API (한글 예외 처리 포함)
+# 🛠️ [백엔드 함수 정의 2] 실시간 날씨 API
 def get_weather(location):
     try:
         location_map = {
-            "용인시": "Yongin", "용인": "Yongin",
-            "서울시": "Seoul", "서울": "Seoul",
-            "안양시": "Anyang", "안양": "Anyang",
-            "인천": "Incheon", "부산": "Busan",
-            "수원": "Suwon", "군포": "Gunpo", "의왕": "Uiwang"
+            "용인시": "Yongin", "용인": "Yongin", "서울시": "Seoul", "서울": "Seoul",
+            "안양시": "Anyang", "안양": "Anyang", "인천": "Incheon", "부산": "Busan"
         }
         eng_location = location_map.get(location, location)
         url = f"https://wttr.in/{eng_location},KR?format=j1"
-        
         headers = {"User-Agent": "curl"}
         response = requests.get(url, headers=headers, timeout=10)
         
         if response.status_code == 200:
             current = response.json()["current_condition"][0]
             return json.dumps({
-                "location": location,
-                "temp_c": current["temp_C"],
-                "condition": current["weatherDesc"][0]["value"],
-                "humidity": f"{current['humidity']}%"
+                "location": location, "temp_c": current["temp_C"],
+                "condition": current["weatherDesc"][0]["value"], "humidity": f"{current['humidity']}%"
             }, ensure_ascii=False)
         return json.dumps({"error": "Weather API failed"})
     except Exception as e:
@@ -85,304 +83,11 @@ def get_weather(location):
 def search_web(query):
     try:
         url = "https://serpapi.com/search"
-        params = {
-            "engine": "google",
-            "q": query,
-            "hl": "ko",  
-            "gl": "kr",  
-            "api_key": st.secrets["SERP_API_KEY"]  
-        }
+        params = {"engine": "google", "q": query, "hl": "ko", "gl": "kr", "api_key": st.secrets["SERP_API_KEY"]}
         response = requests.get(url, params=params, timeout=10)
-        
         if response.status_code == 200:
             results = response.json()
             search_snippets = []
             for result in results.get("organic_results", [])[:3]:
                 search_snippets.append(f"🔗 제목: {result.get('title')}\n내용: {result.get('snippet')}\n")
-                
-            return json.dumps({"search_results": search_snippets}, ensure_ascii=False)
-        return json.dumps({"error": f"SerpApi returned status {response.status_code}"})
-    except Exception as e:
-        return json.dumps({"error": str(e)})
-
-# 🛠️ [백엔드 함수 정의 4] 영화 데이터베이스 RAG 검색 (신규 추가)
-def search_movie_rag(query):
-    """Azure AI Search 인덱스에서 시맨틱 쿼리를 날려 관련 영화 문서를 직접 검색해 반환합니다."""
-    try:
-        rag_completion = client.chat.completions.create(
-            model="gpt-4o-mini-10ai034", 
-            messages=[
-                {"role": "system", "content": "사용자가 정보를 찾는 데 도움이 되는 AI 도우미입니다."},
-                {"role": "user", "content": query}
-            ],
-            max_tokens=2000,
-            temperature=0.7,
-            extra_body={
-              "data_sources": [{
-                  "type": "azure_search",
-                  "parameters": {
-                    "endpoint": f"{st.secrets['SEARCH_ENDPOINT']}",
-                    "index_name": "rag-10ai034realmovie",  # 👈 🚨 [교정] 문자열 따옴표 처리 완료
-                    "semantic_configuration": "rag-10ai034realmovie-semantic-configuration",
-                    "query_type": "semantic",
-                    "fields_mapping": {},
-                    "in_scope": True,
-                    "filter": None,
-                    "strictness": 3,
-                    "top_n_documents": 5,
-                    "authentication": {
-                      "type": "api_key",
-                      "key": f"{st.secrets['SEARCH_KEY']}"
-                    }
-                  }
-                }]
-            }
-        )
-        return json.dumps({"search_result": rag_completion.choices[0].message.content}, ensure_ascii=False)
-    except Exception as e:
-        return json.dumps({"error": f"영화 RAG 검색 중 에러 발생: {str(e)}"})
-
-# 세션 상태 초기화
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-if "thread_id" not in st.session_state:
-    thread = client.beta.threads.create()
-    st.session_state.thread_id = thread.id
-
-# 어시스턴트 생성 시 테스트 완료한 모든 툴셋 탑재
-if "assistant_id" not in st.session_state:
-    with st.spinner("🐻 만능 비서 툴셋 장착 중... 잠시만 기다려주세요"):
-        assistant = client.beta.assistants.create(
-            model="gpt-4o-mini-10ai034", 
-            instructions=(
-                "당신은 사용자의 복합 질문에 답변하는 만능 데이터 분석 비서입니다. 답변은 한국어로 친절하고 상냥하게 작성해주세요.\n\n"
-                "🚨 [최종 답변 작성 및 툴 사용 필수 엄수 지침] 🚨\n"
-                "1. 사용자가 멀티 복합 질문을 던지면 절대로 생략하지 말고 모든 번호에 대한 답변을 결과물에 정렬하여 출력하세요.\n"
-                "2. 날씨 질문의 `get_weather` 함수를 트리거할 때, location 인자값은 가능한 영문 도시명으로 추출하여 전달하세요.\n"
-                "3. 문서 검색(LH 매입임대 등)은 `file_search` 도구를 활용해 깊숙이 조회하여 팩트 기반으로 답변하세요.\n"
-                "4. 영화 추천, 영화 정보 관련 검색 요청이 들어오면 반드시 `search_movie_rag` 함수를 호출하여 팩트 기반으로 신뢰성 높은 답변을 제공하세요.\n\n"  # 👈 지침 추가
-                "📊 [그래프 생성 시 필수 에러 방지 지침] 📊\n"
-                "- `code_interpreter`로 그래프를 그릴 때, 절대로 한글 세팅이나 외부 폰트 파일을 다루는 코드를 작성하지 마세요.\n"
-                "- 모든 타이틀과 축 레이블은 100% 영문(English)으로만 작성하세요.\n"
-                "- 축 간격을 설정할 때는 `plt.xticks(range(0, 101, 10))`와 같이 표준적이고 에러 없는 문법만 사용하세요.\n"
-                "- 그래프 크기는 `plt.figure(figsize=(10, 5))`로 조정하세요."
-            ),
-            tools=[
-                {"type": "code_interpreter"}, 
-                {"type": "file_search"},
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "getMultipliedValue",
-                        "description": "두 수를 받아 곱한 결과값을 반환",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "num1": {"type": "number"},
-                                "num2": {"type": "number"}
-                            },
-                            "required": ["num1", "num2"]
-                        }
-                    }
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "get_weather",
-                        "description": "특정 도시나 지역의 현재 실시간 날씨 정보 조회",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "location": {"type": "string", "description": "도시 이름 (예: Yongin, Seoul)"}
-                            },
-                            "required": ["location"]
-                        }
-                    }
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "search_web",
-                        "description": "최신 뉴스, 실시간 정보, 인물, 트렌드 등 내부 지식이나 문서에 없는 일반적인 내용을 구글에서 검색합니다.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "query": {"type": "string", "description": "구글에 검색할 핵심 키워드 문장"}
-                            },
-                            "required": ["query"]
-                        }
-                    }
-                },
-                # 🚨 [교정] 영화 RAG 검색을 위해 어시스턴트 도구 리스트에 명세서 추가 필수!
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "search_movie_rag",
-                        "description": "자체 전용 영화 데이터베이스(Azure AI Search)에서 사용자가 찾는 조건이나 장르의 영화 정보 목록을 RAG 기반으로 조회합니다.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "query": {"type": "string", "description": "영화 데이터베이스에 검색할 핵심 키워드 또는 자연어 문장"}
-                            },
-                            "required": ["query"]
-                        }
-                    }
-                }
-            ],
-            tool_resources={
-                "file_search": {"vector_store_ids": ["vs_VLR7NXPhY4H3pt1vbniuDuVr"]},
-                "code_interpreter": {"file_ids": []}
-            },
-            temperature=0.7,
-            top_p=1
-        )
-        st.session_state.assistant_id = assistant.id
-
-# 📁 사이드바 구성 및 기능 안내 명시
-st.sidebar.header("📁 데이터 창고 & 매뉴얼")
-
-# ⭐ [메뉴얼 수정] 영화 RAG 관련 한 줄 안내 문구 완벽 추가!
-st.sidebar.markdown("""
-### 🚀 사용 가능한 도구 목록
-1. **🧮 초정밀 계산기**: 대형 숫자 곱셈 연산 기능
-2. **🌤️ 실시간 날씨 조회**: 외부 wttr.in 동적 API 연동
-3. **🔍 LH 매입임대 문서 검색**: LH 매입임대 관련 지식 탐색
-4. **📊 파이썬 코드 실행**: 데이터 시각화 및 인라인 차트 빌드
-5. **🌐 실시간 구글 웹 검색**: 최신 뉴스 및 웹 트렌드 실시간 검색 (SerpApi)
-6. **🎬 전용 영화 데이터 RAG**: Azure AI Search 연동 맞춤형 영화 추천 및 조회
----
-""")
-
-uploaded_file = st.sidebar.file_uploader(
-    "새로운 파일 분석 및 임시 요약", 
-    type=["txt", "pdf", "docx", "xlsx", "csv"]
-)
-
-file_id_to_attach = None
-if uploaded_file is not None:
-    if "last_file_name" not in st.session_state or st.session_state.last_file_name != uploaded_file.name:
-        with st.sidebar.spinner("서버에 안전하게 파일을 올리는 중..."):
-            openai_file = client.files.create(
-                file=(uploaded_file.name, uploaded_file.getvalue()),
-                purpose="assistants"
-            )
-            st.session_state.uploaded_file_id = openai_file.id
-            st.session_state.last_file_name = uploaded_file.name
-        st.sidebar.success("🎈 파일 업로드 성공!")
-        
-    file_id_to_attach = st.session_state.uploaded_file_id
-    if st.sidebar.button("✨ 이 파일 초고속 요약하기"):
-        st.session_state.trigger_prompt = f"첨부 파일 '{uploaded_file.name}'의 핵심 내용을 파악하기 쉽게 항목별로 요약해줘."
-
-# 기존 저장된 대화 레이아웃 렌더링
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        for element in msg["elements"]:
-            if element["type"] == "text":
-                st.markdown(element["value"])
-            elif element["type"] == "image":
-                st.image(element["value"])
-
-# 입력 제어 트리거 통합
-prompt_to_send = None
-if user_input := st.chat_input("쿠키 한 입 먹으면서 대화해봐요..."):
-    prompt_to_send = user_input
-elif "trigger_prompt" in st.session_state:
-    prompt_to_send = st.session_state.trigger_prompt
-    del st.session_state.trigger_prompt
-
-# ⚡ [핵심 엔진] 메시지 처리 및 다단계 툴 콜 통합 구동
-if prompt_to_send:
-    st.chat_message("user").markdown(prompt_to_send)
-    st.session_state.messages.append({
-        "role": "user", 
-        "elements": [{"type": "text", "value": prompt_to_send}]
-    })
-    
-    attachments = []
-    if file_id_to_attach:
-        tool_type = "code_interpreter" if uploaded_file.name.endswith(('.csv', '.xlsx')) else "file_search"
-        attachments.append({
-            "file_id": file_id_to_attach,
-            "tools": [{"type": tool_type}]
-        })
-    
-    client.beta.threads.messages.create(
-        thread_id=st.session_state.thread_id,
-        role="user",
-        content=prompt_to_send,
-        attachments=attachments if attachments else None
-    )
-    
-    run = client.beta.threads.runs.create(
-        thread_id=st.session_state.thread_id,
-        assistant_id=st.session_state.assistant_id
-    )
-    
-    with st.chat_message("assistant"):
-        with st.spinner("🍪 생각 주머니 돌리는 중..."):
-            
-            # 다단계 통합 상태 전개 루프
-            while True:
-                # 1단계: 기본 큐 및 인터프리터 연산 대기
-                while run.status in ['queued', 'in_progress', 'cancelling']:
-                    time.sleep(0.5)
-                    run = client.beta.threads.runs.retrieve(thread_id=st.session_state.thread_id, run_id=run.id)
-                
-                # 分기 ①: 최종 완료 상태 도달 시 (화면 렌더링)
-                if run.status == 'completed':
-                    messages = client.beta.threads.messages.list(thread_id=st.session_state.thread_id)
-                    last_message = messages.data[0]
-                    
-                    current_elements = []
-                    for content_block in reversed(last_message.content):
-                        if content_block.type == 'text':
-                            text_content = content_block.text.value
-                            st.markdown(text_content)
-                            current_elements.append({"type": "text", "value": text_content})
-                        
-                        elif content_block.type == 'image_file':
-                            f_id = content_block.image_file.file_id
-                            image_data = client.files.content(f_id).read()
-                            st.image(image_data)
-                            current_elements.append({"type": "image", "value": image_data})
-                    
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "elements": current_elements
-                    })
-                    break
-                
-                # 分기 ②: 백엔드 커스텀 파이썬 함수 트리거가 작동했을 때 (Requires Action)
-                elif run.status == 'requires_action':
-                    tool_calls = run.required_action.submit_tool_outputs.tool_calls
-                    tool_outputs = []
-                    
-                    for tool_call in tool_calls:
-                        f_name = tool_call.function.name
-                        f_args = json.loads(tool_call.function.arguments)
-                        
-                        if f_name == "getMultipliedValue":
-                            output = getMultipliedValue(num1=f_args.get("num1"), num2=f_args.get("num2"))
-                        elif f_name == "get_weather":
-                            output = get_weather(location=f_args.get("location"))
-                        elif f_name == "search_web":
-                            output = search_web(query=f_args.get("query"))
-                        elif f_name == "search_movie_rag":
-                            output = search_movie_rag(query=f_args.get("query"))
-                        else:
-                            output = json.dumps({"error": "Unknown function"})
-                            
-                        tool_outputs.append({"tool_call_id": tool_call.id, "output": output})
-                    
-                    run = client.beta.threads.runs.submit_tool_outputs(
-                        thread_id=st.session_state.thread_id,
-                        run_id=run.id,
-                        tool_outputs=tool_outputs
-                    )
-                else:
-                    st.error(f"삐비빅... 연산 중 오류가 났어요. 상태: {run.status}")
-                    break
-                    
-            st.rerun()
+            return json.dumps({"search_results": search_snippets}, ensure_
