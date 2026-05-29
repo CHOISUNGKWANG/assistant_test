@@ -4,6 +4,10 @@ import time
 import requests
 import streamlit as st
 from openai import AzureOpenAI
+import warnings
+
+# DeprecationWarning 계열의 경고 로그를 전면 차단하여 출력하지 않음
+warnings.filterwarnings(action='ignore', category=DeprecationWarning)
 
 # 1. API 설정
 endpoint = st.secrets["ENDPOINT"]
@@ -52,7 +56,6 @@ def getMultipliedValue(num1, num2):
 # 🛠️ [백엔드 함수 정의 2] 실시간 날씨 API (한글 예외 처리 포함)
 def get_weather(location):
     try:
-        # 1. 자주 검색하는 주요 도시 한글 명칭 안전하게 영어로 치환
         location_map = {
             "용인시": "Yongin", "용인": "Yongin",
             "서울시": "Seoul", "서울": "Seoul",
@@ -61,9 +64,6 @@ def get_weather(location):
             "수원": "Suwon", "군포": "Gunpo", "의왕": "Uiwang"
         }
         eng_location = location_map.get(location, location)
-        
-        # 2. ⭐ [핵심 교정] 도시명 뒤에 ',KR'을 붙여 중국 등 해외 동일 지명으로 빠지는 현상 차단
-        # 예: Anyang,KR 형태로 주소가 만들어져 한국 안양시 데이터만 무조건 가져옵니다.
         url = f"https://wttr.in/{eng_location},KR?format=j1"
         
         headers = {"User-Agent": "curl"}
@@ -81,23 +81,22 @@ def get_weather(location):
     except Exception as e:
         return json.dumps({"error": str(e)})
 
+# 🛠️ [백엔드 함수 정의 3] 구글 웹 검색 (SerpApi)
 def search_web(query):
     try:
         url = "https://serpapi.com/search"
         params = {
             "engine": "google",
             "q": query,
-            "hl": "ko",  # 한국어 결과 우선
-            "gl": "kr",  # 대한민국 지역 기준
-            "api_key": st.secrets["SERP_API_KEY"]  # secrets.toml에 키 추가 필요
+            "hl": "ko",  
+            "gl": "kr",  
+            "api_key": st.secrets["SERP_API_KEY"]  
         }
         response = requests.get(url, params=params, timeout=10)
         
         if response.status_code == 200:
             results = response.json()
             search_snippets = []
-            
-            # 검색 결과 중 핵심 텍스트 스니펫 상위 3개 추출
             for result in results.get("organic_results", [])[:3]:
                 search_snippets.append(f"🔗 제목: {result.get('title')}\n내용: {result.get('snippet')}\n")
                 
@@ -105,6 +104,43 @@ def search_web(query):
         return json.dumps({"error": f"SerpApi returned status {response.status_code}"})
     except Exception as e:
         return json.dumps({"error": str(e)})
+
+# 🛠️ [백엔드 함수 정의 4] 영화 데이터베이스 RAG 검색 (신규 추가)
+def search_movie_rag(query):
+    """Azure AI Search 인덱스에서 시맨틱 쿼리를 날려 관련 영화 문서를 직접 검색해 반환합니다."""
+    try:
+        rag_completion = client.chat.completions.create(
+            model="gpt-4o-mini-10ai034", 
+            messages=[
+                {"role": "system", "content": "사용자가 정보를 찾는 데 도움이 되는 AI 도우미입니다."},
+                {"role": "user", "content": query}
+            ],
+            max_tokens=2000,
+            temperature=0.7,
+            extra_body={
+              "data_sources": [{
+                  "type": "azure_search",
+                  "parameters": {
+                    "endpoint": f"{st.secrets['SEARCH_ENDPOINT']}",
+                    "index_name": "rag-10ai034realmovie",  # 👈 🚨 [교정] 문자열 따옴표 처리 완료
+                    "semantic_configuration": "rag-10ai034realmovie-semantic-configuration",
+                    "query_type": "semantic",
+                    "fields_mapping": {},
+                    "in_scope": True,
+                    "filter": None,
+                    "strictness": 3,
+                    "top_n_documents": 5,
+                    "authentication": {
+                      "type": "api_key",
+                      "key": f"{st.secrets['SEARCH_KEY']}"
+                    }
+                  }
+                }]
+            }
+        )
+        return json.dumps({"search_result": rag_completion.choices[0].message.content}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": f"영화 RAG 검색 중 에러 발생: {str(e)}"})
 
 # 세션 상태 초기화
 if "messages" not in st.session_state:
@@ -124,10 +160,11 @@ if "assistant_id" not in st.session_state:
                 "🚨 [최종 답변 작성 및 툴 사용 필수 엄수 지침] 🚨\n"
                 "1. 사용자가 멀티 복합 질문을 던지면 절대로 생략하지 말고 모든 번호에 대한 답변을 결과물에 정렬하여 출력하세요.\n"
                 "2. 날씨 질문의 `get_weather` 함수를 트리거할 때, location 인자값은 가능한 영문 도시명으로 추출하여 전달하세요.\n"
-                "3. 문서 검색(LH 매입임대 등)은 `file_search` 도구를 활용해 깊숙이 조회하여 팩트 기반으로 답변하세요.\n\n"
+                "3. 문서 검색(LH 매입임대 등)은 `file_search` 도구를 활용해 깊숙이 조회하여 팩트 기반으로 답변하세요.\n"
+                "4. 영화 추천, 영화 정보 관련 검색 요청이 들어오면 반드시 `search_movie_rag` 함수를 호출하여 팩트 기반으로 신뢰성 높은 답변을 제공하세요.\n\n"  # 👈 지침 추가
                 "📊 [그래프 생성 시 필수 에러 방지 지침] 📊\n"
                 "- `code_interpreter`로 그래프를 그릴 때, 절대로 한글 세팅이나 외부 폰트 파일을 다루는 코드를 작성하지 마세요.\n"
-                "- 모든 타이틀과 축 레이블은 100% 영문(English)으로만 작성하세요. (예: title='Histogram', xlabel='X', ylabel='Y')\n"
+                "- 모든 타이틀과 축 레이블은 100% 영문(English)으로만 작성하세요.\n"
                 "- 축 간격을 설정할 때는 `plt.xticks(range(0, 101, 10))`와 같이 표준적이고 에러 없는 문법만 사용하세요.\n"
                 "- 그래프 크기는 `plt.figure(figsize=(10, 5))`로 조정하세요."
             ),
@@ -176,6 +213,21 @@ if "assistant_id" not in st.session_state:
                             "required": ["query"]
                         }
                     }
+                },
+                # 🚨 [교정] 영화 RAG 검색을 위해 어시스턴트 도구 리스트에 명세서 추가 필수!
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "search_movie_rag",
+                        "description": "자체 전용 영화 데이터베이스(Azure AI Search)에서 사용자가 찾는 조건이나 장르의 영화 정보 목록을 RAG 기반으로 조회합니다.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string", "description": "영화 데이터베이스에 검색할 핵심 키워드 또는 자연어 문장"}
+                            },
+                            "required": ["query"]
+                        }
+                    }
                 }
             ],
             tool_resources={
@@ -190,14 +242,15 @@ if "assistant_id" not in st.session_state:
 # 📁 사이드바 구성 및 기능 안내 명시
 st.sidebar.header("📁 데이터 창고 & 매뉴얼")
 
-# ⭐ 사용법 및 탑재된 강력한 기능 안내 문구 추가
+# ⭐ [메뉴얼 수정] 영화 RAG 관련 한 줄 안내 문구 완벽 추가!
 st.sidebar.markdown("""
 ### 🚀 사용 가능한 도구 목록
 1. **🧮 초정밀 계산기**: 대형 숫자 곱셈 연산 기능
 2. **🌤️ 실시간 날씨 조회**: 외부 wttr.in 동적 API 연동
 3. **🔍 LH 매입임대 문서 검색**: LH 매입임대 관련 지식 탐색
 4. **📊 파이썬 코드 실행**: 데이터 시각화 및 인라인 차트 빌드
-5. **🌐 실시간 구글 웹 검색**: 최신 뉴스 및 웹 트렌드 실시간 검색 팝업 (SerpApi)
+5. **🌐 실시간 구글 웹 검색**: 최신 뉴스 및 웹 트렌드 실시간 검색 (SerpApi)
+6. **🎬 전용 영화 데이터 RAG**: Azure AI Search 연동 맞춤형 영화 추천 및 조회
 ---
 """)
 
@@ -217,7 +270,7 @@ if uploaded_file is not None:
             st.session_state.uploaded_file_id = openai_file.id
             st.session_state.last_file_name = uploaded_file.name
         st.sidebar.success("🎈 파일 업로드 성공!")
-    
+        
     file_id_to_attach = st.session_state.uploaded_file_id
     if st.sidebar.button("✨ 이 파일 초고속 요약하기"):
         st.session_state.trigger_prompt = f"첨부 파일 '{uploaded_file.name}'의 핵심 내용을 파악하기 쉽게 항목별로 요약해줘."
@@ -277,13 +330,12 @@ if prompt_to_send:
                     time.sleep(0.5)
                     run = client.beta.threads.runs.retrieve(thread_id=st.session_state.thread_id, run_id=run.id)
                 
-                # 분기 ①: 최종 완료 상태 도달 시 (화면 렌더링)
+                # 分기 ①: 최종 완료 상태 도달 시 (화면 렌더링)
                 if run.status == 'completed':
                     messages = client.beta.threads.messages.list(thread_id=st.session_state.thread_id)
                     last_message = messages.data[0]
                     
                     current_elements = []
-                    # 정상 정렬 출력을 위해 reversed 사용
                     for content_block in reversed(last_message.content):
                         if content_block.type == 'text':
                             text_content = content_block.text.value
@@ -296,14 +348,13 @@ if prompt_to_send:
                             st.image(image_data)
                             current_elements.append({"type": "image", "value": image_data})
                     
-                    # 최종 누적 및 리프레시
                     st.session_state.messages.append({
                         "role": "assistant",
                         "elements": current_elements
                     })
                     break
                 
-                # 분기 ②: 백엔드 커스텀 파이썬 함수 트리거가 작동했을 때 (Requires Action)
+                # 分기 ②: 백엔드 커스텀 파이썬 함수 트리거가 작동했을 때 (Requires Action)
                 elif run.status == 'requires_action':
                     tool_calls = run.required_action.submit_tool_outputs.tool_calls
                     tool_outputs = []
@@ -318,12 +369,13 @@ if prompt_to_send:
                             output = get_weather(location=f_args.get("location"))
                         elif f_name == "search_web":
                             output = search_web(query=f_args.get("query"))
+                        elif f_name == "search_movie_rag":
+                            output = search_movie_rag(query=f_args.get("query"))
                         else:
                             output = json.dumps({"error": "Unknown function"})
                             
                         tool_outputs.append({"tool_call_id": tool_call.id, "output": output})
                     
-                    # 획득한 백엔드 데이터를 어시스턴트에 환류 및 상위 와일문으로 회귀
                     run = client.beta.threads.runs.submit_tool_outputs(
                         thread_id=st.session_state.thread_id,
                         run_id=run.id,
