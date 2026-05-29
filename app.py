@@ -117,7 +117,7 @@ def search_movie_rag(query):
                 {"role": "system", "content": "사용자가 정보를 찾는 데 도움이 되는 AI 도우미입니다."},
                 {"role": "user", "content": query}
             ],
-            max_tokens=5000,
+            max_tokens=2000,
             temperature=0.7,
             extra_body={
               "data_sources": [{
