@@ -109,7 +109,7 @@ def search_web(query):
         return json.dumps({"error": str(e)})
 
 def search_movie_rag(query):
-    """Azure AI Search 인덱스에서 시맨틱 데이터를 조회하고 출처를 완벽히 매핑합니다."""
+    """Azure AI Search 인덱스에서 순수 데이터와 사이테이션 원본을 정제하여 어시스턴트에 리턴합니다."""
     try:
         rag_completion = client.chat.completions.create(
             model="gpt-4o-mini-10ai034", 
@@ -138,30 +138,27 @@ def search_movie_rag(query):
             }
         )
         
-        answer_text = rag_completion.choices[0].message.content
-        citation_list = []
+        # 🌟 참고 코드 반영: 순수 답변과 원본 출처를 안전한 딕셔너리 포맷으로 완벽 분리
+        answer_content = rag_completion.choices[0].message.content
+        movie_citations = []
         
-        # 🌟 [교정 핵심 구간] 요청하신 레퍼런스 가이드라인의 구조에 따라 딕셔너리 안전 타겟팅 파싱 적용
         message_extra = rag_completion.choices[0].message.model_extra
         if message_extra and 'context' in message_extra:
-            # 딕셔너리 키 형태로 안전하게 대입 받아오기
             raw_citations = message_extra['context'].get('citations', [])
             for idx, cit in enumerate(raw_citations, 1):
-                # 데이터 인덱싱 규격 다양성에 대응하는 멀티 폴백 스키마 적용
                 title = cit.get('title') or cit.get('metadata_storage_name') or cit.get('filepath') or ''
                 title = title.replace('.pdf', '').replace('.txt', '').strip()
                 
                 if not title:
                     title = f"영화 데이터베이스 검색 단락 (ID: {cit.get('chunk_id', idx)})"
+                movie_citations.append(f"[{idx}] {title}")
                 
-                citation_list.append(f"[{idx}] {title}")
-                
-        # 🌟 모델이 소스 컨텍스트를 탈취하지 못하도록 어시스턴트가 100% 덤프하는 규격화된 스타일로 본문 병합
-        if citation_list:
-            citation_footer = f"<div class='custom-citation'><b>🎬 영화 DB 참조 출처:</b><br>" + "<br>".join(citation_list) + "</div>"
-            answer_text = f"{answer_text}\n\n{citation_footer}"
-            
-        return json.dumps({"search_result": answer_text}, ensure_ascii=False)
+        # 구조화된 JSON 데이터로 리턴하여 어시스턴트의 가두리 탈취 차단
+        return json.dumps({
+            "answer": answer_content,
+            "movie_citations": movie_citations
+        }, ensure_ascii=False)
+        
     except Exception as e:
         error_msg = f"❌ [영화 RAG 시스템 내부 크래시 발생]\n\n원인: {str(e)}\n\n상세 추적 경로:\n{traceback.format_exc()}"
         return json.dumps({"error": error_msg}, ensure_ascii=False)
@@ -187,9 +184,8 @@ if "assistant_id" not in st.session_state:
                 "1. 사용자가 멀티 복합 질문을 던지면 절대로 생략하지 말고 모든 번호에 대한 답변을 결과물에 정렬하여 출력하세요.\n"
                 "2. 날씨 질문의 `get_weather` 함수를 트리거할 때, location 인자값은 가능한 영문 도시명으로 추출하여 전달하세요.\n"
                 "3. 문서 검색(LH 매입임대 등)은 `file_search` 도구를 활용해 깊숙이 조회하여 팩트 기반으로 답변하세요.\n"
-                "4. 영화 추천 관련 검색 요청이 들어오면 반드시 `search_movie_rag` 함수를 호출한 뒤, 그 결과 리턴 텍스트 내부에 동봉된 출처 디자인 태그(<div class='custom-citation'>)를 절대로 수정하거나 지우지 말고 최종 답변 하단에 그대로 포함시켜 출력해야 합니다.\n\n"
-                "📊 [그래프 생성 시 필수 에러 방지 지침] 📊\n"
-                "- 모든 타이틀과 축 레이블은 100% 영문(English)으로만 작성하세요."
+                "4. 영화 추천 관련 검색 요청이 들어오면 반드시 `search_movie_rag` 함수를 호출하세요. "
+                "그 결과 리턴되는 JSON 데이터 내의 `answer` 내용을 활용하여 친절히 답변을 작성하되, **출처 데이터인 `movie_citations` 배열 알림 요소를 절대로 임의로 가공하거나 누락하지 말고 텍스트 내에 고스란히 복사하여 함께 출력해야 합니다.**"
             ),
             tools=[
                 {"type": "code_interpreter"}, {"type": "file_search"},
@@ -233,7 +229,7 @@ if uploaded_file is not None:
     if st.sidebar.button("✨ 이 파일 초고속 요약하기"):
         st.session_state.trigger_prompt = f"첨부 파일 '{uploaded_file.name}'의 핵심 내용을 파악하기 쉽게 항목별로 요약해줘."
 
-# 렌더링 파트 (마크다운 주입 플래그 개방)
+# 렌더링 파트 
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         for element in msg["elements"]:
@@ -289,7 +285,7 @@ if prompt_to_send:
                             if content_block.type == 'text':
                                 text_content = content_block.text.value
                                 annotations = getattr(content_block.text, 'annotations', [])
-                                citations = []
+                                lh_citations = []
                                 
                                 # LH 문서 검색 주석 가공
                                 for index, annotation in enumerate(annotations):
@@ -297,18 +293,19 @@ if prompt_to_send:
                                     if file_citation := getattr(annotation, 'file_citation', None):
                                         try:
                                             cited_file = client.files.retrieve(file_citation.file_id)
-                                            citations.append(f"[{index + 1}] {cited_file.filename}")
+                                            lh_citations.append(f"[{index + 1}] {cited_file.filename}")
                                         except:
-                                            citations.append(f"[{index + 1}] 내부 참조 문서 (ID: {file_citation.file_id[:8]}...)")
+                                            lh_citations.append(f"[{index + 1}] 내부 참조 문서 (ID: {file_citation.file_id[:8]}...)")
                                             
                                 st.markdown(text_content, unsafe_allow_html=True)
                                 current_elements.append({"type": "text", "value": text_content})
                                 
-                                if citations:
-                                    citation_box_html = f"<div class='custom-citation'><b>📄 LH 문서 검색 참조 출처:</b><br>" + "<br>".join(citations) + "</div>"
+                                # LH 출처 출력
+                                if lh_citations:
+                                    citation_box_html = f"<div class='custom-citation'><b>📄 LH 문서 검색 참조 출처:</b><br>" + "<br>".join(lh_citations) + "</div>"
                                     st.markdown(citation_box_html, unsafe_allow_html=True)
                                     current_elements.append({"type": "text", "value": citation_box_html})
-                            
+                                    
                             elif content_block.type == 'image_file':
                                 f_id = content_block.image_file.file_id
                                 image_data = client.files.content(f_id).read()
@@ -327,7 +324,6 @@ if prompt_to_send:
                         f_name = tool_call.function.name
                         f_args = json.loads(tool_call.function.arguments)
                         
-                        # 화면 리프레시 후에도 기록에 영구 보존되도록 메시지 박제
                         info_text = f"⚙️ **[만능 비서 내부 연산 가동]** `{f_name}` 함수를 실행하고 있습니다. (인자값: {f_args})"
                         st.info(info_text)
                         st.session_state.messages.append({
@@ -335,7 +331,6 @@ if prompt_to_send:
                         })
                         st.toast(f"📡 {f_name} 호출됨", icon="🤖")
                         
-                        # 실행 라우팅 구조화
                         if f_name == "getMultipliedValue":
                             output = getMultipliedValue(num1=f_args.get("num1"), num2=f_args.get("num2"))
                         elif f_name == "get_weather":
@@ -343,15 +338,31 @@ if prompt_to_send:
                         elif f_name == "search_web":
                             output = search_web(query=f_args.get("query"))
                         elif f_name == "search_movie_rag":
+                            # 🌟 고도화 가공: RAG 함수에서 순수 JSON 데이터를 안전하게 리턴받음
                             output = search_movie_rag(query=f_args.get("query"))
                             
-                            # 만약 영화 RAG에서 에러가 리턴되었다면 화면에 에러 트레이스백 즉각 시각화
                             if "❌ [영화 RAG 시스템 내부 크래시 발생]" in output:
                                 parsed_err = json.loads(output).get("error", "")
                                 st.error(parsed_err)
                                 st.session_state.messages.append({
                                     "role": "assistant", "elements": [{"type": "text", "value": f"```text\n{parsed_err}\n```"}]
                                 })
+                            else:
+                                # 🌟 완료 분기 이전에 툴이 가동되어 데이터를 수령했을 때 미리 가시적으로 출처 팝업 렌더링
+                                try:
+                                    rag_data = json.loads(output)
+                                    movie_citations = rag_data.get("movie_citations", [])
+                                    if movie_citations:
+                                        # 마크다운 렌더링 영역에 출처 전면 덤프 처리 및 세션 스토리지 영구 박제화
+                                        citation_box_html = f"<div class='custom-citation'><b>🎬 영화 DB 참조 출처:</b><br>" + "<br>".join(movie_citations) + "</div>"
+                                        st.markdown(citation_box_html, unsafe_allow_html=True)
+                                        st.session_state.messages.append({
+                                            "role": "assistant", "elements": [{"type": "text", "value": citation_box_html}]
+                                        })
+                                    # 어시스턴트가 팩트 본문만 참고하도록 텍스트 필드만 추출하여 환류
+                                    output = json.dumps({"search_result": rag_data.get("answer", "")}, ensure_ascii=False)
+                                except Exception as parse_exception:
+                                    pass
                         else:
                             output = json.dumps({"error": "Unknown function"})
                             
