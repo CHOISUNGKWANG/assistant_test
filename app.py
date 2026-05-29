@@ -2,28 +2,31 @@ import os
 import json
 import time
 import requests
-import traceback  # 상세 에러 로그 추적을 위해 도입
+import traceback
 import streamlit as st
 from openai import AzureOpenAI
 import warnings
 
-# DeprecationWarning 계열의 경고 로그를 전면 차단하여 출력하지 않음
+# 경고 로그 무시 및 초기 환경설정
 warnings.filterwarnings(action='ignore', category=DeprecationWarning)
+st.set_page_config(page_title="말랑 만능 AI 비서", layout="wide")
 
-# 1. API 설정
-endpoint = st.secrets["ENDPOINT"]
-apikey = st.secrets["API_KEY"]
+# 1. API 안전 관리 정의
+ENDPOINT = st.secrets["ENDPOINT"]
+API_KEY = st.secrets["API_KEY"]
+
+# 🎬 영화 데이터베이스(Azure AI Search) 용 비밀값 로드
+SEARCH_ENDPOINT = st.secrets.get("SEARCH_ENDPOINT", "")
+SEARCH_KEY = st.secrets.get("SEARCH_KEY", "")
+SEARCH_INDEX = st.secrets.get("SEARCH_INDEX_NAME", "rag-10ai034realmovie") # 스펠링 오류 방지용 디폴트셋
 
 client = AzureOpenAI(
-    azure_endpoint=endpoint,
-    api_key=apikey,
+    azure_endpoint=ENDPOINT,
+    api_key=API_KEY,
     api_version="2024-05-01-preview"
 )
 
-# 스트림릿 UI 구성
-st.set_page_config(page_title="말랑 만능 AI 비서", layout="wide")
-
-# 🎨 정밀 레이트 CSS 주입 (출처 박스 디자인 보장 및 글씨 시인성 보강)
+# 🎨 테마 스타일시트 주입 (출처 박스 다크 브라운 가독성 영구 고정)
 st.markdown("""
     <style>
     .stApp { background-color: #F7F4EF !important; }
@@ -45,7 +48,6 @@ st.markdown("""
     .stChatInputContainer textarea { color: #4A3B32 !important; }
     .stChatInputContainer { border-radius: 15px !important; }
     
-    /* 🌟 LH 및 영화 출처 공용 커스텀 스타일링 (배경 베이지, 글자 딥 브라운 고정) */
     .custom-citation {
         background-color: #EAE3D8 !important; 
         padding: 12px !important; 
@@ -57,28 +59,29 @@ st.markdown("""
         line-height: 1.6 !important;
         display: block !important;
     }
+    .custom-citation b { color: #1A0F0A !important; }
     </style>
 """, unsafe_allow_html=True)
 
 st.title("🧸 말랑말랑 통합 AI 비서")
 st.caption("외부 실시간 API 연동부터 파이썬 시각화, 문서 정밀 탐색까지 모두 처리합니다.")
 
-# 🛠️ [백엔드 함수 정의 1] 곱셈 연산
+# ==========================================
+# 🛠️ 백엔드 연동 도구 기능정의 부문
+# ==========================================
+
 def getMultipliedValue(num1, num2):
     return json.dumps({"result": num1 * num2})
 
-# 🛠️ [백엔드 함수 정의 2] 실시간 날씨 API
 def get_weather(location):
     try:
         location_map = {
             "용인시": "Yongin", "용인": "Yongin", "서울시": "Seoul", "서울": "Seoul",
-            "안양시": "Anyang", "안양": "Anyang", "인천": "Incheon", "부산": "Busan",
-            "수원": "Suwon", "군포": "Gunpo", "의왕": "Uiwang"
+            "안양시": "Anyang", "안양": "Anyang", "인천": "Incheon", "부산": "Busan"
         }
         eng_location = location_map.get(location, location)
         url = f"https://wttr.in/{eng_location},KR?format=j1"
-        headers = {"User-Agent": "curl"}
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers={"User-Agent": "curl"}, timeout=10)
         
         if response.status_code == 200:
             current = response.json()["current_condition"][0]
@@ -90,7 +93,6 @@ def get_weather(location):
     except Exception as e:
         return json.dumps({"error": str(e)})
 
-# 🛠️ [백엔드 함수 정의 3] 구글 웹 검색 (SerpApi)
 def search_web(query):
     try:
         url = "https://serpapi.com/search"
@@ -106,13 +108,14 @@ def search_web(query):
     except Exception as e:
         return json.dumps({"error": str(e)})
 
-# 🛠️ [백엔드 함수 정의 4] 영화 데이터베이스 RAG 검색 (🚨 마크다운 출처 결합 방식으로 전면 개편)
 def search_movie_rag(query):
+    """Azure AI Search 인덱스에서 시맨틱 데이터를 조회하고 출처를 수집합니다."""
     try:
+        # 🚨 중요: Chat Completions API 전용 배포 이름이 맞는지 재점검 요망
         rag_completion = client.chat.completions.create(
             model="gpt-4o-mini-10ai034", 
             messages=[
-                {"role": "system", "content": "사용자가 정보를 찾는 데 도움이 되는 AI 도우미입니다. 답변 시 주석 태그는 제외하고 자연스럽게 풀어서 작성하세요."},
+                {"role": "system", "content": "사용자가 정보를 찾는 데 도움이 되는 AI 도우미입니다."},
                 {"role": "user", "content": query}
             ],
             max_tokens=2000,
@@ -121,12 +124,16 @@ def search_movie_rag(query):
               "data_sources": [{
                   "type": "azure_search",
                   "parameters": {
-                    "endpoint": f"{st.secrets['SEARCH_ENDPOINT']}",
-                    "index_name": "rag-10ai034realmovie",
+                    "endpoint": f"{SEARCH_ENDPOINT}",
+                    "index_name": f"{SEARCH_INDEX}",
                     "semantic_configuration": "rag-10ai034realmovie-semantic-configuration",
                     "query_type": "semantic",
-                    "fields_mapping": {}, "in_scope": True, "filter": None, "strictness": 3, "top_n_documents": 5,
-                    "authentication": {"type": "api_key", "key": f"{st.secrets['SEARCH_KEY']}"}
+                    "fields_mapping": {}, 
+                    "in_scope": True, 
+                    "filter": None, 
+                    "strictness": 3, 
+                    "top_n_documents": 5,
+                    "authentication": {"type": "api_key", "key": f"{SEARCH_KEY}"}
                   }
                 }]
             }
@@ -135,21 +142,17 @@ def search_movie_rag(query):
         answer_text = rag_completion.choices[0].message.content
         citation_list = []
         
-        # model_extra 기반으로 메타데이터 추출 인입 조절
         message_extra = rag_completion.choices[0].message.model_extra
         if message_extra and 'context' in message_extra:
             raw_citations = message_extra['context'].get('citations', [])
             for idx, cit in enumerate(raw_citations, 1):
                 title = cit.get('title', '').replace('.pdf', '').replace('.txt', '')
                 if not title:
-                    title = f"영화 자료 청크 {cit.get('chunk_id', idx)}"
+                    title = f"영화 데이터베이스 자료 단락 (ID: {cit.get('chunk_id', idx)})"
                 citation_list.append(f"[{idx}] {title}")
                 
-        # 🌟 HTML이 아니라 마크다운 텍스트와 스타일 클래스를 안전하게 믹싱하여 전달합니다.
         if citation_list:
-            citation_lines = "<br>".join(citation_list)
-            citation_footer = f"<div class='custom-citation'><b>🎬 영화 DB 참조 출처:</b><br>{citation_lines}</div>"
-            # 최종 답변 문자열 하단에 HTML 주석 블록을 누적 결합
+            citation_footer = f"<div class='custom-citation'><b>🎬 영화 DB 참조 출처:</b><br>" + "<br>".join(citation_list) + "</div>"
             answer_text = f"{answer_text}\n\n{citation_footer}"
             
         return json.dumps({"search_result": answer_text}, ensure_ascii=False)
@@ -157,15 +160,17 @@ def search_movie_rag(query):
         error_msg = f"❌ [영화 RAG 시스템 내부 크래시 발생]\n\n원인: {str(e)}\n\n상세 추적 경로:\n{traceback.format_exc()}"
         return json.dumps({"error": error_msg}, ensure_ascii=False)
 
-# 세션 상태 초기화
+# ==========================================
+# ⚙️ 세션 가두리 및 안정화 변수 세팅
+# ==========================================
+
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 if "thread_id" not in st.session_state:
-    thread = client.beta.threads.create()
-    st.session_state.thread_id = thread.id
+    st.session_state.thread_id = client.beta.threads.create().id
 
-# 어시스턴트 고정 생성 
+# 새로고침 시 무한 재생성 우회 및 고정 처리
 if "assistant_id" not in st.session_state:
     with st.spinner("🐻 만능 비서 툴셋 장착 중... 잠시만 기다려주세요"):
         assistant = client.beta.assistants.create(
@@ -176,49 +181,16 @@ if "assistant_id" not in st.session_state:
                 "1. 사용자가 멀티 복합 질문을 던지면 절대로 생략하지 말고 모든 번호에 대한 답변을 결과물에 정렬하여 출력하세요.\n"
                 "2. 날씨 질문의 `get_weather` 함수를 트리거할 때, location 인자값은 가능한 영문 도시명으로 추출하여 전달하세요.\n"
                 "3. 문서 검색(LH 매입임대 등)은 `file_search` 도구를 활용해 깊숙이 조회하여 팩트 기반으로 답변하세요.\n"
-                "4. 영화 추천, 영화 정보 관련 검색 요청이 들어오면 반드시 `search_movie_rag` 함수를 호출한 뒤, 그 결과 데이터(출처 문구 포함)를 사용자에게 가공 없이 그대로 전달하여 대답을 완성하세요.\n\n"
+                "4. 영화 추천 관련 검색 요청이 들어오면 반드시 `search_movie_rag` 함수를 호출한 뒤, 그 결과 텍스트(출처 디자인 태그 포함)를 최종 가공 없이 전면에 노출해 대답을 완성하세요.\n\n"
                 "📊 [그래프 생성 시 필수 에러 방지 지침] 📊\n"
                 "- 모든 타이틀과 축 레이블은 100% 영문(English)으로만 작성하세요."
             ),
             tools=[
                 {"type": "code_interpreter"}, {"type": "file_search"},
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "getMultipliedValue", "description": "두 수를 받아 곱한 결과값을 반환",
-                        "parameters": {
-                            "type": "object", "properties": {"num1": {"type": "number"}, "num2": {"type": "number"}},
-                            "required": ["num1", "num2"]
-                        }
-                    }
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "get_weather", "description": "특정 도시나 지역의 현재 실시간 날씨 정보 조회",
-                        "parameters": {
-                            "type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]
-                        }
-                    }
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "search_web", "description": "구글 웹 검색 기술 작동",
-                        "parameters": {
-                            "type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]
-                        }
-                    }
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "search_movie_rag", "description": "자체 전용 영화 데이터베이스 RAG 조회",
-                        "parameters": {
-                            "type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]
-                        }
-                    }
-                }
+                {"type": "function", "function": {"name": "getMultipliedValue", "description": "두 수의 곱셈 연산", "parameters": {"type": "object", "properties": {"num1": {"type": "number"}, "num2": {"type": "number"}}, "required": ["num1", "num2"]}}},
+                {"type": "function", "function": {"name": "get_weather", "description": "실시간 도시 날씨 정보 조회", "parameters": {"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]}}},
+                {"type": "function", "function": {"name": "search_web", "description": "구글 최신 웹정보 검색 트랙 빌드", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
+                {"type": "function", "function": {"name": "search_movie_rag", "description": "자체 전용 영화 데이터베이스 RAG 조회", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}}
             ],
             tool_resources={
                 "file_search": {"vector_store_ids": ["vs_VLR7NXPhY4H3pt1vbniuDuVr"]}, "code_interpreter": {"file_ids": []}
@@ -227,7 +199,7 @@ if "assistant_id" not in st.session_state:
         )
         st.session_state.assistant_id = assistant.id
 
-# 📁 사이드바 구성
+# 📁 사이드바 가이드라인 빌드
 st.sidebar.header("📁 데이터 창고 & 매뉴얼")
 st.sidebar.markdown("""
 ### 🚀 사용 가능한 도구 목록
@@ -255,17 +227,16 @@ if uploaded_file is not None:
     if st.sidebar.button("✨ 이 파일 초고속 요약하기"):
         st.session_state.trigger_prompt = f"첨부 파일 '{uploaded_file.name}'의 핵심 내용을 파악하기 쉽게 항목별로 요약해줘."
 
-# 기존 저장된 대화 레이아웃 렌더링
+# 렌더링 파트 (마크다운 주입 플래그 개방)
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         for element in msg["elements"]:
             if element["type"] == "text":
-                # 🌟 출처 컴포넌트의 HTML 스타일을 살리기 위해 전체 목록에 대입
                 st.markdown(element["value"], unsafe_allow_html=True)
             elif element["type"] == "image":
                 st.image(element["value"])
 
-# 입력 제어 트리거 통합
+# 입력 제어 게이트웨이
 prompt_to_send = None
 if user_input := st.chat_input("쿠키 한 입 먹으면서 대화해봐요..."):
     prompt_to_send = user_input
@@ -273,7 +244,9 @@ elif "trigger_prompt" in st.session_state:
     prompt_to_send = st.session_state.trigger_prompt
     del st.session_state.trigger_prompt
 
-# ⚡ [핵심 엔진] 메시지 처리 및 다단계 툴 콜 통합 구동
+# ==========================================
+# ⚡ 동적 비동기 런타임 이벤트 엔진 루프
+# ==========================================
 if prompt_to_send:
     st.chat_message("user").markdown(prompt_to_send)
     st.session_state.messages.append({"role": "user", "elements": [{"type": "text", "value": prompt_to_send}]})
@@ -297,10 +270,9 @@ if prompt_to_send:
                     time.sleep(0.5)
                     run = client.beta.threads.runs.retrieve(thread_id=st.session_state.thread_id, run_id=run.id)
                 
-                # 분기 ①: 최종 완료 상태 도달 시
+                # 분기 ①: 최종 런(Run) 완료 수집 시
                 if run.status == 'completed':
                     messages = client.beta.threads.messages.list(thread_id=st.session_state.thread_id)
-                    
                     assistant_messages = [m for m in messages.data if m.role == 'assistant' and m.run_id == run.id]
                     
                     if assistant_messages:
@@ -313,7 +285,7 @@ if prompt_to_send:
                                 annotations = getattr(content_block.text, 'annotations', [])
                                 citations = []
                                 
-                                # LH 매입임대용 내장 파일 서치용 출처 결합기
+                                # LH 문서 검색 주석 가공
                                 for index, annotation in enumerate(annotations):
                                     text_content = text_content.replace(annotation.text, f' [{index + 1}]')
                                     if file_citation := getattr(annotation, 'file_citation', None):
@@ -340,7 +312,7 @@ if prompt_to_send:
                         st.session_state.messages.append({"role": "assistant", "elements": current_elements})
                     break
                 
-                # 분기 ②: 백엔드 커스텀 함수 작동 시 
+                # 분기 ②: 중간 도구 함수 트리거 수령 시 (Requires Action)
                 elif run.status == 'requires_action':
                     tool_calls = run.required_action.submit_tool_outputs.tool_calls
                     tool_outputs = []
@@ -349,17 +321,15 @@ if prompt_to_send:
                         f_name = tool_call.function.name
                         f_args = json.loads(tool_call.function.arguments)
                         
-                        # 화면 새로고침 시에도 소멸하지 않도록 기록 보존 처리
+                        # 화면 리프레시 후에도 기록에 영구 보존되도록 메시지 박제
                         info_text = f"⚙️ **[만능 비서 내부 연산 가동]** `{f_name}` 함수를 실행하고 있습니다. (인자값: {f_args})"
                         st.info(info_text)
-                        
                         st.session_state.messages.append({
-                            "role": "assistant",
-                            "elements": [{"type": "text", "value": info_text}]
+                            "role": "assistant", "elements": [{"type": "text", "value": info_text}]
                         })
-                        
                         st.toast(f"📡 {f_name} 호출됨", icon="🤖")
                         
+                        # 실행 라우팅 구조화
                         if f_name == "getMultipliedValue":
                             output = getMultipliedValue(num1=f_args.get("num1"), num2=f_args.get("num2"))
                         elif f_name == "get_weather":
@@ -369,12 +339,12 @@ if prompt_to_send:
                         elif f_name == "search_movie_rag":
                             output = search_movie_rag(query=f_args.get("query"))
                             
+                            # 만약 영화 RAG에서 에러가 리턴되었다면 화면에 에러 트레이스백 즉각 시각화
                             if "❌ [영화 RAG 시스템 내부 크래시 발생]" in output:
                                 parsed_err = json.loads(output).get("error", "")
                                 st.error(parsed_err)
                                 st.session_state.messages.append({
-                                    "role": "assistant",
-                                    "elements": [{"type": "text", "value": f"```text\n{parsed_err}\n```"}]
+                                    "role": "assistant", "elements": [{"type": "text", "value": f"```text\n{parsed_err}\n```"}]
                                 })
                         else:
                             output = json.dumps({"error": "Unknown function"})
