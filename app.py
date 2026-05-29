@@ -16,9 +16,9 @@ ENDPOINT = st.secrets["ENDPOINT"]
 API_KEY = st.secrets["API_KEY"]
 
 # 🎬 영화 데이터베이스(Azure AI Search) 용 비밀값 로드
-SEARCH_ENDPOINT = st.secrets.get("SEARCH_ENDPOINT", "")
-SEARCH_KEY = st.secrets.get("SEARCH_KEY", "")
-SEARCH_INDEX = st.secrets.get("SEARCH_INDEX_NAME", "rag-10ai034realmovie") # 스펠링 오류 방지용 디폴트셋
+SEARCH_ENDPOINT = st.secrets["SEARCH_ENDPOINT"]
+SEARCH_KEY = st.secrets["SEARCH_KEY"]
+SEARCH_INDEX = "rag-10ai034realmovie" # 스펠링 오류 방지용 디폴트셋
 
 client = AzureOpenAI(
     azure_endpoint=ENDPOINT,
@@ -125,7 +125,7 @@ def search_movie_rag(query):
                   "type": "azure_search",
                   "parameters": {
                     "endpoint": f"{SEARCH_ENDPOINT}",
-                    "index_name": "rag-10ai034realmovie",
+                    "index_name": f"{SEARCH_INDEX}",
                     "semantic_configuration": "rag-10ai034realmovie-semantic-configuration",
                     "query_type": "semantic",
                     "fields_mapping": {}, 
