@@ -26,7 +26,7 @@ client = AzureOpenAI(
     api_version="2024-05-01-preview"
 )
 
-# 🎨 테마 스타일시트 주입 (출처 박스 다크 브라운 가독성 영구 고정)
+# 🎨 테마 스타일시트 주입
 st.markdown("""
     <style>
     .stApp { background-color: #F7F4EF !important; }
@@ -138,7 +138,6 @@ def search_movie_rag(query):
             }
         )
         
-        # 🌟 참고 코드 반영: 순수 답변과 원본 출처를 안전한 딕셔너리 포맷으로 완벽 분리
         answer_content = rag_completion.choices[0].message.content
         movie_citations = []
         
@@ -153,7 +152,6 @@ def search_movie_rag(query):
                     title = f"영화 데이터베이스 검색 단락 (ID: {cit.get('chunk_id', idx)})"
                 movie_citations.append(f"[{idx}] {title}")
                 
-        # 구조화된 JSON 데이터로 리턴하여 어시스턴트의 가두리 탈취 차단
         return json.dumps({
             "answer": answer_content,
             "movie_citations": movie_citations
@@ -173,7 +171,10 @@ if "messages" not in st.session_state:
 if "thread_id" not in st.session_state:
     st.session_state.thread_id = client.beta.threads.create().id
 
-# 새로고침 시 무한 재생성 우회 및 고정 처리
+# 영화 출처 임시 저장을 위한 세션 상태 추가
+if "temp_movie_citations" not in st.session_state:
+    st.session_state.temp_movie_citations = None
+
 if "assistant_id" not in st.session_state:
     with st.spinner("🐻 만능 비서 툴셋 장착 중... 잠시만 기다려주세요"):
         assistant = client.beta.assistants.create(
@@ -185,7 +186,7 @@ if "assistant_id" not in st.session_state:
                 "2. 날씨 질문의 `get_weather` 함수를 트리거할 때, location 인자값은 가능한 영문 도시명으로 추출하여 전달하세요.\n"
                 "3. 문서 검색(LH 매입임대 등)은 `file_search` 도구를 활용해 깊숙이 조회하여 팩트 기반으로 답변하세요.\n"
                 "4. 영화 추천 관련 검색 요청이 들어오면 반드시 `search_movie_rag` 함수를 호출하세요. "
-                "그 결과 리턴되는 JSON 데이터 내의 `answer` 내용을 활용하여 친절히 답변을 작성하되, **출처 데이터인 `movie_citations` 배열 알림 요소를 절대로 임의로 가공하거나 누락하지 말고 텍스트 내에 고스란히 복사하여 함께 출력해야 합니다.**"
+                "그 결과 리턴되는 JSON 데이터 내의 `answer` 내용을 바탕으로 가공 없이 솔직하고 명확하게 답변 본문을 작성하세요."
             ),
             tools=[
                 {"type": "code_interpreter"}, {"type": "file_search"},
@@ -247,7 +248,7 @@ elif "trigger_prompt" in st.session_state:
     del st.session_state.trigger_prompt
 
 # ==========================================
-# ⚡ 동적 비동기 런타임 이벤트 엔진 루프
+# ⚡ DYNAMIC RUNTIME EVENT LOOP
 # ==========================================
 if prompt_to_send:
     st.chat_message("user").markdown(prompt_to_send)
@@ -272,7 +273,7 @@ if prompt_to_send:
                     time.sleep(0.5)
                     run = client.beta.threads.runs.retrieve(thread_id=st.session_state.thread_id, run_id=run.id)
                 
-                # 분기 ①: 최종 런(Run) 완료 수집 시
+                # 분기 ①: 최종 런(Run) 완료 수집 시 (영화 출처 순서 패치 완료)
                 if run.status == 'completed':
                     messages = client.beta.threads.messages.list(thread_id=st.session_state.thread_id)
                     assistant_messages = [m for m in messages.data if m.role == 'assistant' and m.run_id == run.id]
@@ -297,10 +298,19 @@ if prompt_to_send:
                                         except:
                                             lh_citations.append(f"[{index + 1}] 내부 참조 문서 (ID: {file_citation.file_id[:8]}...)")
                                             
+                                # 1. AI 답변 본문 먼저 출력
                                 st.markdown(text_content, unsafe_allow_html=True)
                                 current_elements.append({"type": "text", "value": text_content})
                                 
-                                # LH 출처 출력
+                                # 2. 만약 보관된 '영화 RAG 출처'가 있다면, 답변 본문 바로 다음에 렌더링하도록 유도
+                                if st.session_state.temp_movie_citations:
+                                    movie_citation_box = f"<div class='custom-citation'><b>🎬 영화 DB 참조 출처:</b><br>" + "<br>".join(st.session_state.temp_movie_citations) + "</div>"
+                                    st.markdown(movie_citation_box, unsafe_allow_html=True)
+                                    current_elements.append({"type": "text", "value": movie_citation_box})
+                                    # 출력 완료 후 임시 보관함 비우기
+                                    st.session_state.temp_movie_citations = None
+                                
+                                # 3. LH 출처 출력
                                 if lh_citations:
                                     citation_box_html = f"<div class='custom-citation'><b>📄 LH 문서 검색 참조 출처:</b><br>" + "<br>".join(lh_citations) + "</div>"
                                     st.markdown(citation_box_html, unsafe_allow_html=True)
@@ -338,7 +348,6 @@ if prompt_to_send:
                         elif f_name == "search_web":
                             output = search_web(query=f_args.get("query"))
                         elif f_name == "search_movie_rag":
-                            # 🌟 고도화 가공: RAG 함수에서 순수 JSON 데이터를 안전하게 리턴받음
                             output = search_movie_rag(query=f_args.get("query"))
                             
                             if "❌ [영화 RAG 시스템 내부 크래시 발생]" in output:
@@ -348,20 +357,14 @@ if prompt_to_send:
                                     "role": "assistant", "elements": [{"type": "text", "value": f"```text\n{parsed_err}\n```"}]
                                 })
                             else:
-                                # 🌟 완료 분기 이전에 툴이 가동되어 데이터를 수령했을 때 미리 가시적으로 출처 팝업 렌더링
                                 try:
                                     rag_data = json.loads(output)
-                                    movie_citations = rag_data.get("movie_citations", [])
-                                    if movie_citations:
-                                        # 마크다운 렌더링 영역에 출처 전면 덤프 처리 및 세션 스토리지 영구 박제화
-                                        citation_box_html = f"<div class='custom-citation'><b>🎬 영화 DB 참조 출처:</b><br>" + "<br>".join(movie_citations) + "</div>"
-                                        st.markdown(citation_box_html, unsafe_allow_html=True)
-                                        st.session_state.messages.append({
-                                            "role": "assistant", "elements": [{"type": "text", "value": citation_box_html}]
-                                        })
-                                    # 어시스턴트가 팩트 본문만 참고하도록 텍스트 필드만 추출하여 환류
+                                    # 🌟 [패치 핵심]: 화면에 바로 출력하지 않고 세션 임시 스토리지에 출처 데이터를 고이 모셔둡니다.
+                                    st.session_state.temp_movie_citations = rag_data.get("movie_citations", [])
+                                    
+                                    # 어시스턴트는 팩트 본문만 읽을 수 있도록 순수 대답 텍스트만 환류
                                     output = json.dumps({"search_result": rag_data.get("answer", "")}, ensure_ascii=False)
-                                except Exception as parse_exception:
+                                except:
                                     pass
                         else:
                             output = json.dumps({"error": "Unknown function"})
