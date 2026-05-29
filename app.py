@@ -23,7 +23,7 @@ client = AzureOpenAI(
 # 스트림릿 UI 구성
 st.set_page_config(page_title="말랑 만능 AI 비서", layout="wide")
 
-# 🎨 정밀 레이트 CSS 주입 (흰색 글씨 강제 교정 및 가독성 패치)
+# 🎨 정밀 레이트 CSS 주입 (출처 박스 디자인 보장 및 글씨 시인성 보강)
 st.markdown("""
     <style>
     .stApp { background-color: #F7F4EF !important; }
@@ -45,19 +45,17 @@ st.markdown("""
     .stChatInputContainer textarea { color: #4A3B32 !important; }
     .stChatInputContainer { border-radius: 15px !important; }
     
-    /* 🌟 [출처 박스 시인성 확보] 다크 브라운으로 글씨색을 고정하여 하얗게 안 보이던 문제 해결 */
-    .citation-box {
+    /* 🌟 LH 및 영화 출처 공용 커스텀 스타일링 (배경 베이지, 글자 딥 브라운 고정) */
+    .custom-citation {
         background-color: #EAE3D8 !important; 
         padding: 12px !important; 
         border-left: 5px solid #C4A482 !important;
         border-radius: 6px !important; 
-        margin-top: 12px !important; 
-        font-size: 0.95rem !important; 
+        margin-top: 15px !important; 
+        font-size: 0.93rem !important; 
         color: #2B1E17 !important; 
-        line-height: 1.5 !important;
-    }
-    .citation-box b, .citation-box strong {
-        color: #1A0F0A !important;
+        line-height: 1.6 !important;
+        display: block !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -108,13 +106,13 @@ def search_web(query):
     except Exception as e:
         return json.dumps({"error": str(e)})
 
-# 🛠️ [백엔드 함수 정의 4] 영화 데이터베이스 RAG 검색 (🚨 스택트레이스 로깅 보완)
+# 🛠️ [백엔드 함수 정의 4] 영화 데이터베이스 RAG 검색 (🚨 마크다운 출처 결합 방식으로 전면 개편)
 def search_movie_rag(query):
     try:
         rag_completion = client.chat.completions.create(
             model="gpt-4o-mini-10ai034", 
             messages=[
-                {"role": "system", "content": "사용자가 정보를 찾는 데 도움이 되는 AI 도우미입니다."},
+                {"role": "system", "content": "사용자가 정보를 찾는 데 도움이 되는 AI 도우미입니다. 답변 시 주석 태그는 제외하고 자연스럽게 풀어서 작성하세요."},
                 {"role": "user", "content": query}
             ],
             max_tokens=2000,
@@ -124,7 +122,7 @@ def search_movie_rag(query):
                   "type": "azure_search",
                   "parameters": {
                     "endpoint": f"{st.secrets['SEARCH_ENDPOINT']}",
-                    "index_name": "rag-10ai034realmovie",  # 👈 🚨 변수 에러 유발 부위 따옴표로 감싸서 수정 완료
+                    "index_name": "rag-10ai034realmovie",
                     "semantic_configuration": "rag-10ai034realmovie-semantic-configuration",
                     "query_type": "semantic",
                     "fields_mapping": {}, "in_scope": True, "filter": None, "strictness": 3, "top_n_documents": 5,
@@ -137,20 +135,25 @@ def search_movie_rag(query):
         answer_text = rag_completion.choices[0].message.content
         citation_list = []
         
+        # model_extra 기반으로 메타데이터 추출 인입 조절
         message_extra = rag_completion.choices[0].message.model_extra
         if message_extra and 'context' in message_extra:
             raw_citations = message_extra['context'].get('citations', [])
             for idx, cit in enumerate(raw_citations, 1):
-                title = cit.get('title', '알 수 없는 문서')
+                title = cit.get('title', '').replace('.pdf', '').replace('.txt', '')
+                if not title:
+                    title = f"영화 자료 청크 {cit.get('chunk_id', idx)}"
                 citation_list.append(f"[{idx}] {title}")
                 
+        # 🌟 HTML이 아니라 마크다운 텍스트와 스타일 클래스를 안전하게 믹싱하여 전달합니다.
         if citation_list:
-            citation_html = f"<div class='citation-box'><b>🎬 영화 DB 참조 출처:</b><br>" + "<br>".join(citation_list) + "</div>"
-            answer_text += f"\n\n{citation_html}"
+            citation_lines = "<br>".join(citation_list)
+            citation_footer = f"<div class='custom-citation'><b>🎬 영화 DB 참조 출처:</b><br>{citation_lines}</div>"
+            # 최종 답변 문자열 하단에 HTML 주석 블록을 누적 결합
+            answer_text = f"{answer_text}\n\n{citation_footer}"
             
         return json.dumps({"search_result": answer_text}, ensure_ascii=False)
     except Exception as e:
-        # 영화 RAG API 통신 상의 크래시 경로를 화면에 출력할 수 있도록 정교화
         error_msg = f"❌ [영화 RAG 시스템 내부 크래시 발생]\n\n원인: {str(e)}\n\n상세 추적 경로:\n{traceback.format_exc()}"
         return json.dumps({"error": error_msg}, ensure_ascii=False)
 
@@ -162,7 +165,7 @@ if "thread_id" not in st.session_state:
     thread = client.beta.threads.create()
     st.session_state.thread_id = thread.id
 
-# 어시스턴트 고정 생성 (tools 누락 부분 정상 조립)
+# 어시스턴트 고정 생성 
 if "assistant_id" not in st.session_state:
     with st.spinner("🐻 만능 비서 툴셋 장착 중... 잠시만 기다려주세요"):
         assistant = client.beta.assistants.create(
@@ -173,7 +176,7 @@ if "assistant_id" not in st.session_state:
                 "1. 사용자가 멀티 복합 질문을 던지면 절대로 생략하지 말고 모든 번호에 대한 답변을 결과물에 정렬하여 출력하세요.\n"
                 "2. 날씨 질문의 `get_weather` 함수를 트리거할 때, location 인자값은 가능한 영문 도시명으로 추출하여 전달하세요.\n"
                 "3. 문서 검색(LH 매입임대 등)은 `file_search` 도구를 활용해 깊숙이 조회하여 팩트 기반으로 답변하세요.\n"
-                "4. 영화 추천, 영화 정보 관련 검색 요청이 들어오면 반드시 `search_movie_rag` 함수를 호출하여 답변을 제공하세요.\n\n"
+                "4. 영화 추천, 영화 정보 관련 검색 요청이 들어오면 반드시 `search_movie_rag` 함수를 호출한 뒤, 그 결과 데이터(출처 문구 포함)를 사용자에게 가공 없이 그대로 전달하여 대답을 완성하세요.\n\n"
                 "📊 [그래프 생성 시 필수 에러 방지 지침] 📊\n"
                 "- 모든 타이틀과 축 레이블은 100% 영문(English)으로만 작성하세요."
             ),
@@ -207,7 +210,6 @@ if "assistant_id" not in st.session_state:
                         }
                     }
                 },
-                # 🚨 누락되었던 영화 RAG용 툴 명세서 정상 추가 조립 완료!
                 {
                     "type": "function",
                     "function": {
@@ -231,10 +233,10 @@ st.sidebar.markdown("""
 ### 🚀 사용 가능한 도구 목록
 1. **🧮 초정밀 계산기**: 대형 숫자 곱셈 연산 기능
 2. **🌤️ 실시간 날씨 조회**: 외부 wttr.in 동적 API 연동
-3. **🔍 LH 매입임대 문서 검색**: LH 매입임대 관련 지식 탐색 (+ 출처 매핑 완료)
+3. **🔍 LH 매입임대 문서 검색**: LH 매입임대 관련 지식 탐색
 4. **📊 파이썬 코드 실행**: 데이터 시각화 및 인라인 차트 빌드
 5. **🌐 실시간 구글 웹 검색**: 최신 뉴스 및 웹 트렌드 실시간 검색 (SerpApi)
-6. **🎬 전용 영화 데이터 RAG**: Azure AI Search 연동 맞춤형 영화 추천 및 조회 (+ 출처 매핑 완료)
+6. **🎬 전용 영화 데이터 RAG**: Azure AI Search 연동 맞춤형 영화 추천 및 조회
 ---
 """)
 
@@ -258,6 +260,7 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         for element in msg["elements"]:
             if element["type"] == "text":
+                # 🌟 출처 컴포넌트의 HTML 스타일을 살리기 위해 전체 목록에 대입
                 st.markdown(element["value"], unsafe_allow_html=True)
             elif element["type"] == "image":
                 st.image(element["value"])
@@ -294,11 +297,10 @@ if prompt_to_send:
                     time.sleep(0.5)
                     run = client.beta.threads.runs.retrieve(thread_id=st.session_state.thread_id, run_id=run.id)
                 
-                # 분기 ①: 최종 완료 상태 도달 시 (안정화 필터링 도입)
+                # 분기 ①: 최종 완료 상태 도달 시
                 if run.status == 'completed':
                     messages = client.beta.threads.messages.list(thread_id=st.session_state.thread_id)
                     
-                    # 🚨 [중요 개편] 이번 런(Run)에서 해당 어시스턴트가 생성한 최신 메시지만 엄격하게 격리 필터링
                     assistant_messages = [m for m in messages.data if m.role == 'assistant' and m.run_id == run.id]
                     
                     if assistant_messages:
@@ -311,7 +313,7 @@ if prompt_to_send:
                                 annotations = getattr(content_block.text, 'annotations', [])
                                 citations = []
                                 
-                                # LH 매입임대 등 내장 벡터스토어 파일명 파싱 처리
+                                # LH 매입임대용 내장 파일 서치용 출처 결합기
                                 for index, annotation in enumerate(annotations):
                                     text_content = text_content.replace(annotation.text, f' [{index + 1}]')
                                     if file_citation := getattr(annotation, 'file_citation', None):
@@ -325,7 +327,7 @@ if prompt_to_send:
                                 current_elements.append({"type": "text", "value": text_content})
                                 
                                 if citations:
-                                    citation_box_html = f"<div class='citation-box'><b>📄 LH 문서 검색 참조 출처:</b><br>" + "<br>".join(citations) + "</div>"
+                                    citation_box_html = f"<div class='custom-citation'><b>📄 LH 문서 검색 참조 출처:</b><br>" + "<br>".join(citations) + "</div>"
                                     st.markdown(citation_box_html, unsafe_allow_html=True)
                                     current_elements.append({"type": "text", "value": citation_box_html})
                             
@@ -338,7 +340,7 @@ if prompt_to_send:
                         st.session_state.messages.append({"role": "assistant", "elements": current_elements})
                     break
                 
-                # 분기 ②: 백엔드 커스텀 함수 작동 시 (메시지 영구 고정화 적용)
+                # 분기 ②: 백엔드 커스텀 함수 작동 시 
                 elif run.status == 'requires_action':
                     tool_calls = run.required_action.submit_tool_outputs.tool_calls
                     tool_outputs = []
@@ -347,7 +349,7 @@ if prompt_to_send:
                         f_name = tool_call.function.name
                         f_args = json.loads(tool_call.function.arguments)
                         
-                        # 🚨 새로고침해도 화면에서 사라지지 않도록 가시성 안내 텍스트 영구 박제화
+                        # 화면 새로고침 시에도 소멸하지 않도록 기록 보존 처리
                         info_text = f"⚙️ **[만능 비서 내부 연산 가동]** `{f_name}` 함수를 실행하고 있습니다. (인자값: {f_args})"
                         st.info(info_text)
                         
@@ -367,7 +369,6 @@ if prompt_to_send:
                         elif f_name == "search_movie_rag":
                             output = search_movie_rag(query=f_args.get("query"))
                             
-                            # 영화 RAG 로직 내부 에러 캐치 시 화면에 강제 에러 컴포넌트 덤프 및 박제
                             if "❌ [영화 RAG 시스템 내부 크래시 발생]" in output:
                                 parsed_err = json.loads(output).get("error", "")
                                 st.error(parsed_err)
