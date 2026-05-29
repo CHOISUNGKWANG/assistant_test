@@ -18,7 +18,7 @@ API_KEY = st.secrets["API_KEY"]
 # 🎬 영화 데이터베이스(Azure AI Search) 용 비밀값 로드
 SEARCH_ENDPOINT = st.secrets["SEARCH_ENDPOINT"]
 SEARCH_KEY = st.secrets["SEARCH_KEY"]
-SEARCH_INDEX = "rag-10ai034realmovie" # 스펠링 오류 방지용 디폴트셋
+SEARCH_INDEX = "rag-10ai034realmovie" 
 
 client = AzureOpenAI(
     azure_endpoint=ENDPOINT,
@@ -109,9 +109,8 @@ def search_web(query):
         return json.dumps({"error": str(e)})
 
 def search_movie_rag(query):
-    """Azure AI Search 인덱스에서 시맨틱 데이터를 조회하고 출처를 수집합니다."""
+    """Azure AI Search 인덱스에서 시맨틱 데이터를 조회하고 출처를 완벽히 매핑합니다."""
     try:
-        # 🚨 중요: Chat Completions API 전용 배포 이름이 맞는지 재점검 요망
         rag_completion = client.chat.completions.create(
             model="gpt-4o-mini-10ai034", 
             messages=[
@@ -142,15 +141,22 @@ def search_movie_rag(query):
         answer_text = rag_completion.choices[0].message.content
         citation_list = []
         
+        # 🌟 [교정 핵심 구간] 요청하신 레퍼런스 가이드라인의 구조에 따라 딕셔너리 안전 타겟팅 파싱 적용
         message_extra = rag_completion.choices[0].message.model_extra
         if message_extra and 'context' in message_extra:
+            # 딕셔너리 키 형태로 안전하게 대입 받아오기
             raw_citations = message_extra['context'].get('citations', [])
             for idx, cit in enumerate(raw_citations, 1):
-                title = cit.get('title', '').replace('.pdf', '').replace('.txt', '')
+                # 데이터 인덱싱 규격 다양성에 대응하는 멀티 폴백 스키마 적용
+                title = cit.get('title') or cit.get('metadata_storage_name') or cit.get('filepath') or ''
+                title = title.replace('.pdf', '').replace('.txt', '').strip()
+                
                 if not title:
-                    title = f"영화 데이터베이스 자료 단락 (ID: {cit.get('chunk_id', idx)})"
+                    title = f"영화 데이터베이스 검색 단락 (ID: {cit.get('chunk_id', idx)})"
+                
                 citation_list.append(f"[{idx}] {title}")
                 
+        # 🌟 모델이 소스 컨텍스트를 탈취하지 못하도록 어시스턴트가 100% 덤프하는 규격화된 스타일로 본문 병합
         if citation_list:
             citation_footer = f"<div class='custom-citation'><b>🎬 영화 DB 참조 출처:</b><br>" + "<br>".join(citation_list) + "</div>"
             answer_text = f"{answer_text}\n\n{citation_footer}"
@@ -181,7 +187,7 @@ if "assistant_id" not in st.session_state:
                 "1. 사용자가 멀티 복합 질문을 던지면 절대로 생략하지 말고 모든 번호에 대한 답변을 결과물에 정렬하여 출력하세요.\n"
                 "2. 날씨 질문의 `get_weather` 함수를 트리거할 때, location 인자값은 가능한 영문 도시명으로 추출하여 전달하세요.\n"
                 "3. 문서 검색(LH 매입임대 등)은 `file_search` 도구를 활용해 깊숙이 조회하여 팩트 기반으로 답변하세요.\n"
-                "4. 영화 추천 관련 검색 요청이 들어오면 반드시 `search_movie_rag` 함수를 호출한 뒤, 그 결과 텍스트(출처 디자인 태그 포함)를 최종 가공 없이 전면에 노출해 대답을 완성하세요.\n\n"
+                "4. 영화 추천 관련 검색 요청이 들어오면 반드시 `search_movie_rag` 함수를 호출한 뒤, 그 결과 리턴 텍스트 내부에 동봉된 출처 디자인 태그(<div class='custom-citation'>)를 절대로 수정하거나 지우지 말고 최종 답변 하단에 그대로 포함시켜 출력해야 합니다.\n\n"
                 "📊 [그래프 생성 시 필수 에러 방지 지침] 📊\n"
                 "- 모든 타이틀과 축 레이블은 100% 영문(English)으로만 작성하세요."
             ),
@@ -208,7 +214,7 @@ st.sidebar.markdown("""
 3. **🔍 LH 매입임대 문서 검색**: LH 매입임대 관련 지식 탐색
 4. **📊 파이썬 코드 실행**: 데이터 시각화 및 인라인 차트 빌드
 5. **🌐 실시간 구글 웹 검색**: 최신 뉴스 및 웹 트렌드 실시간 검색 (SerpApi)
-6. **🎬 전용 영화 데이터 RAG**: Azure AI Search 연동 맞춤형 영화 추천 및 조회
+6. **🎬 전용 영화 데이터 RAG**: Azure AI Search 연동 맞춤형 영화 추천 및 조회 (+ 출처 자동 복원 완료)
 ---
 """)
 
