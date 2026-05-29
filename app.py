@@ -125,7 +125,7 @@ def search_movie_rag(query):
                   "type": "azure_search",
                   "parameters": {
                     "endpoint": f"{SEARCH_ENDPOINT}",
-                    "index_name": f"{SEARCH_INDEX}",
+                    "index_name": "rag-10ai034realmovie",
                     "semantic_configuration": "rag-10ai034realmovie-semantic-configuration",
                     "query_type": "semantic",
                     "fields_mapping": {}, 
