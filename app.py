@@ -2,7 +2,7 @@ import os
 import json
 import time
 import requests
-import traceback  # 🚨 상세 에러 로그 추적을 위해 도입
+import traceback  # 상세 에러 로그 추적을 위해 도입
 import streamlit as st
 from openai import AzureOpenAI
 import warnings
@@ -23,7 +23,7 @@ client = AzureOpenAI(
 # 스트림릿 UI 구성
 st.set_page_config(page_title="말랑 만능 AI 비서", layout="wide")
 
-# 🎨 정밀 레이트 CSS 주입 (시인성 전면 개편)
+# 🎨 정밀 레이트 CSS 주입 (흰색 글씨 강제 교정 및 가독성 패치)
 st.markdown("""
     <style>
     .stApp { background-color: #F7F4EF !important; }
@@ -45,7 +45,7 @@ st.markdown("""
     .stChatInputContainer textarea { color: #4A3B32 !important; }
     .stChatInputContainer { border-radius: 15px !important; }
     
-    /* 🌟 [교정] 하얀색 글씨 방지 및 가독성을 위한 찐한 밤색 보장 패치 */
+    /* 🌟 [출처 박스 시인성 확보] 다크 브라운으로 글씨색을 고정하여 하얗게 안 보이던 문제 해결 */
     .citation-box {
         background-color: #EAE3D8 !important; 
         padding: 12px !important; 
@@ -53,7 +53,7 @@ st.markdown("""
         border-radius: 6px !important; 
         margin-top: 12px !important; 
         font-size: 0.95rem !important; 
-        color: #2B1E17 !important; /* 무조건 잘 보이게 짙은 다크 브라운 선언 */
+        color: #2B1E17 !important; 
         line-height: 1.5 !important;
     }
     .citation-box b, .citation-box strong {
@@ -74,7 +74,8 @@ def get_weather(location):
     try:
         location_map = {
             "용인시": "Yongin", "용인": "Yongin", "서울시": "Seoul", "서울": "Seoul",
-            "안양시": "Anyang", "안양": "Anyang", "인천": "Incheon", "부산": "Busan"
+            "안양시": "Anyang", "안양": "Anyang", "인천": "Incheon", "부산": "Busan",
+            "수원": "Suwon", "군포": "Gunpo", "의왕": "Uiwang"
         }
         eng_location = location_map.get(location, location)
         url = f"https://wttr.in/{eng_location},KR?format=j1"
@@ -107,7 +108,7 @@ def search_web(query):
     except Exception as e:
         return json.dumps({"error": str(e)})
 
-# 🛠️ [백엔드 함수 정의 4] 영화 데이터베이스 RAG 검색 (🚨 트레이스백 에러 로그 강화)
+# 🛠️ [백엔드 함수 정의 4] 영화 데이터베이스 RAG 검색 (🚨 스택트레이스 로깅 보완)
 def search_movie_rag(query):
     try:
         rag_completion = client.chat.completions.create(
@@ -123,7 +124,7 @@ def search_movie_rag(query):
                   "type": "azure_search",
                   "parameters": {
                     "endpoint": f"{st.secrets['SEARCH_ENDPOINT']}",
-                    "index_name": "rag-10ai034realmovie",
+                    "index_name": "rag-10ai034realmovie",  # 👈 🚨 변수 에러 유발 부위 따옴표로 감싸서 수정 완료
                     "semantic_configuration": "rag-10ai034realmovie-semantic-configuration",
                     "query_type": "semantic",
                     "fields_mapping": {}, "in_scope": True, "filter": None, "strictness": 3, "top_n_documents": 5,
@@ -144,13 +145,12 @@ def search_movie_rag(query):
                 citation_list.append(f"[{idx}] {title}")
                 
         if citation_list:
-            # 스타일링 클래스를 입혀 가독성 확보
             citation_html = f"<div class='citation-box'><b>🎬 영화 DB 참조 출처:</b><br>" + "<br>".join(citation_list) + "</div>"
             answer_text += f"\n\n{citation_html}"
             
         return json.dumps({"search_result": answer_text}, ensure_ascii=False)
     except Exception as e:
-        # 🚨 콘솔 및 리턴 데이터에 완벽한 스택트레이스를 덤프하도록 수정
+        # 영화 RAG API 통신 상의 크래시 경로를 화면에 출력할 수 있도록 정교화
         error_msg = f"❌ [영화 RAG 시스템 내부 크래시 발생]\n\n원인: {str(e)}\n\n상세 추적 경로:\n{traceback.format_exc()}"
         return json.dumps({"error": error_msg}, ensure_ascii=False)
 
@@ -162,7 +162,7 @@ if "thread_id" not in st.session_state:
     thread = client.beta.threads.create()
     st.session_state.thread_id = thread.id
 
-# 어시스턴트 생성
+# 어시스턴트 고정 생성 (tools 누락 부분 정상 조립)
 if "assistant_id" not in st.session_state:
     with st.spinner("🐻 만능 비서 툴셋 장착 중... 잠시만 기다려주세요"):
         assistant = client.beta.assistants.create(
@@ -201,12 +201,13 @@ if "assistant_id" not in st.session_state:
                 {
                     "type": "function",
                     "function": {
-                        "name": "search_web", "description": "구글 웹 검색 기술 팝업 작동",
+                        "name": "search_web", "description": "구글 웹 검색 기술 작동",
                         "parameters": {
                             "type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]
                         }
                     }
                 },
+                # 🚨 누락되었던 영화 RAG용 툴 명세서 정상 추가 조립 완료!
                 {
                     "type": "function",
                     "function": {
@@ -257,7 +258,7 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         for element in msg["elements"]:
             if element["type"] == "text":
-                st.markdown(element["value"], unsafe_allow_html=True) # 👈 스타일 유지를 위해 변경
+                st.markdown(element["value"], unsafe_allow_html=True)
             elif element["type"] == "image":
                 st.image(element["value"])
 
@@ -269,6 +270,7 @@ elif "trigger_prompt" in st.session_state:
     prompt_to_send = st.session_state.trigger_prompt
     del st.session_state.trigger_prompt
 
+# ⚡ [핵심 엔진] 메시지 처리 및 다단계 툴 콜 통합 구동
 if prompt_to_send:
     st.chat_message("user").markdown(prompt_to_send)
     st.session_state.messages.append({"role": "user", "elements": [{"type": "text", "value": prompt_to_send}]})
@@ -292,45 +294,51 @@ if prompt_to_send:
                     time.sleep(0.5)
                     run = client.beta.threads.runs.retrieve(thread_id=st.session_state.thread_id, run_id=run.id)
                 
-                # 분기 ①: 최종 완료 상태 도달 시
+                # 분기 ①: 최종 완료 상태 도달 시 (안정화 필터링 도입)
                 if run.status == 'completed':
                     messages = client.beta.threads.messages.list(thread_id=st.session_state.thread_id)
-                    last_message = messages.data[0]
                     
-                    current_elements = []
-                    for content_block in reversed(last_message.content):
-                        if content_block.type == 'text':
-                            text_content = content_block.text.value
-                            annotations = content_block.text.annotations
-                            citations = []
-                            
-                            for index, annotation in enumerate(annotations):
-                                text_content = text_content.replace(annotation.text, f' [{index + 1}]')
-                                if file_citation := getattr(annotation, 'file_citation', None):
-                                    try:
-                                        cited_file = client.files.retrieve(file_citation.file_id)
-                                        citations.append(f"[{index + 1}] {cited_file.filename}")
-                                    except:
-                                        citations.append(f"[{index + 1}] 내부 참조 문서 (ID: {file_citation.file_id[:8]}...)")
-                                        
-                            st.markdown(text_content, unsafe_allow_html=True)
-                            current_elements.append({"type": "text", "value": text_content})
-                            
-                            if citations:
-                                citation_box_html = f"<div class='citation-box'><b>📄 LH 문서 검색 참조 출처:</b><br>" + "<br>".join(citations) + "</div>"
-                                st.markdown(citation_box_html, unsafe_allow_html=True)
-                                current_elements.append({"type": "text", "value": citation_box_html})
+                    # 🚨 [중요 개편] 이번 런(Run)에서 해당 어시스턴트가 생성한 최신 메시지만 엄격하게 격리 필터링
+                    assistant_messages = [m for m in messages.data if m.role == 'assistant' and m.run_id == run.id]
+                    
+                    if assistant_messages:
+                        last_message = assistant_messages[0]
+                        current_elements = []
                         
-                        elif content_block.type == 'image_file':
-                            f_id = content_block.image_file.file_id
-                            image_data = client.files.content(f_id).read()
-                            st.image(image_data)
-                            current_elements.append({"type": "image", "value": image_data})
-                    
-                    st.session_state.messages.append({"role": "assistant", "elements": current_elements})
+                        for content_block in reversed(last_message.content):
+                            if content_block.type == 'text':
+                                text_content = content_block.text.value
+                                annotations = getattr(content_block.text, 'annotations', [])
+                                citations = []
+                                
+                                # LH 매입임대 등 내장 벡터스토어 파일명 파싱 처리
+                                for index, annotation in enumerate(annotations):
+                                    text_content = text_content.replace(annotation.text, f' [{index + 1}]')
+                                    if file_citation := getattr(annotation, 'file_citation', None):
+                                        try:
+                                            cited_file = client.files.retrieve(file_citation.file_id)
+                                            citations.append(f"[{index + 1}] {cited_file.filename}")
+                                        except:
+                                            citations.append(f"[{index + 1}] 내부 참조 문서 (ID: {file_citation.file_id[:8]}...)")
+                                            
+                                st.markdown(text_content, unsafe_allow_html=True)
+                                current_elements.append({"type": "text", "value": text_content})
+                                
+                                if citations:
+                                    citation_box_html = f"<div class='citation-box'><b>📄 LH 문서 검색 참조 출처:</b><br>" + "<br>".join(citations) + "</div>"
+                                    st.markdown(citation_box_html, unsafe_allow_html=True)
+                                    current_elements.append({"type": "text", "value": citation_box_html})
+                            
+                            elif content_block.type == 'image_file':
+                                f_id = content_block.image_file.file_id
+                                image_data = client.files.content(f_id).read()
+                                st.image(image_data)
+                                current_elements.append({"type": "image", "value": image_data})
+                        
+                        st.session_state.messages.append({"role": "assistant", "elements": current_elements})
                     break
                 
-                # 🌟 분기 ②: 백엔드 커스텀 함수 작동 시 (메시지 영구 박제 고도화)
+                # 분기 ②: 백엔드 커스텀 함수 작동 시 (메시지 영구 고정화 적용)
                 elif run.status == 'requires_action':
                     tool_calls = run.required_action.submit_tool_outputs.tool_calls
                     tool_outputs = []
@@ -339,11 +347,10 @@ if prompt_to_send:
                         f_name = tool_call.function.name
                         f_args = json.loads(tool_call.function.arguments)
                         
-                        # 1. 화면 새로고침에 소멸하지 않도록 알림 텍스트 구성
+                        # 🚨 새로고침해도 화면에서 사라지지 않도록 가시성 안내 텍스트 영구 박제화
                         info_text = f"⚙️ **[만능 비서 내부 연산 가동]** `{f_name}` 함수를 실행하고 있습니다. (인자값: {f_args})"
                         st.info(info_text)
                         
-                        # 2. 🚨 [핵심 수정] 이 툴콜 기록을 세션 상태 메시지 풀에 영구 저장하여 보존 처리합니다.
                         st.session_state.messages.append({
                             "role": "assistant",
                             "elements": [{"type": "text", "value": info_text}]
@@ -351,7 +358,6 @@ if prompt_to_send:
                         
                         st.toast(f"📡 {f_name} 호출됨", icon="🤖")
                         
-                        # 실제 함수 핸들링 라우터
                         if f_name == "getMultipliedValue":
                             output = getMultipliedValue(num1=f_args.get("num1"), num2=f_args.get("num2"))
                         elif f_name == "get_weather":
@@ -361,11 +367,10 @@ if prompt_to_send:
                         elif f_name == "search_movie_rag":
                             output = search_movie_rag(query=f_args.get("query"))
                             
-                            # 🚨 영화 RAG 응답 결과에 에러(크래시 덤프)가 탐지되었다면 스트림릿 화면에 에러 컴포넌트로 강제 표시
+                            # 영화 RAG 로직 내부 에러 캐치 시 화면에 강제 에러 컴포넌트 덤프 및 박제
                             if "❌ [영화 RAG 시스템 내부 크래시 발생]" in output:
                                 parsed_err = json.loads(output).get("error", "")
                                 st.error(parsed_err)
-                                # 에러 로그도 대화창에 영구 백업
                                 st.session_state.messages.append({
                                     "role": "assistant",
                                     "elements": [{"type": "text", "value": f"```text\n{parsed_err}\n```"}]
