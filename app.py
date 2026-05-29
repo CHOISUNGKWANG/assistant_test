@@ -186,7 +186,8 @@ if "assistant_id" not in st.session_state:
                 "2. 날씨 질문의 `get_weather` 함수를 트리거할 때, location 인자값은 가능한 영문 도시명으로 추출하여 전달하세요.\n"
                 "3. 문서 검색(LH 매입임대 등)은 `file_search` 도구를 활용해 깊숙이 조회하여 팩트 기반으로 답변하세요.\n"
                 "4. 영화 추천 관련 검색 요청이 들어오면 반드시 `search_movie_rag` 함수를 호출하세요. "
-                "그 결과 리턴되는 JSON 데이터 내의 `answer` 내용을 바탕으로 가공 없이 솔직하고 명확하게 답변 본문을 작성하세요."
+                "그 결과 리턴되는 JSON 데이터 내의 `answer` 내용을 바탕으로 가공 없이 솔직하고 명확하게 답변 본문을 작성하세요.\n"
+                "그래프의 라벨은 항상 영어로 표기하세요."
             ),
             tools=[
                 {"type": "code_interpreter"}, {"type": "file_search"},
